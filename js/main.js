@@ -61,8 +61,6 @@ function init() {
 
   window.addEventListener('resize', onWindowResize);
   window.addEventListener('wheel', onWheel, { passive: false });
-
-  setupDragAndDrop();
   setupKeyboard();
 }
 
@@ -156,13 +154,24 @@ function loadModel(url, filesMap) {
       currentRoot.traverse(obj => {
         if (obj.isMesh && obj.material) {
           const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-          mats.forEach(mat => {
+          mats.forEach((mat, idx) => {
             if ((mat.name || '').toUpperCase() === 'SCREEN') {
-              mat.map = videoTex;
-              mat.emissive = new THREE.Color(0xffffff); // full white emissive
-              mat.emissiveIntensity = 1; // increase for more glow
-              mat.emissiveMap = videoTex;
-              mat.needsUpdate = true;
+              // Replace with MeshBasicMaterial to ignore all lighting
+              const basicMat = new THREE.MeshBasicMaterial({
+                map: videoTex,
+                color: 0xffffff,
+                toneMapped: false
+              });
+              if (basicMat.map) {
+                if ('colorSpace' in basicMat.map) basicMat.map.colorSpace = THREE.SRGBColorSpace;
+                if ('encoding' in basicMat.map) basicMat.map.encoding = THREE.sRGBEncoding;
+              }
+              basicMat.needsUpdate = true;
+              if (Array.isArray(obj.material)) {
+                obj.material[idx] = basicMat;
+              } else {
+                obj.material = basicMat;
+              }
             }
           });
         }
@@ -456,34 +465,6 @@ function onWheel(e) {
   applyActiveCamera(false);
 }
 
-function setupDragAndDrop() {
-  const prevent = e => { e.preventDefault(); e.stopPropagation(); };
-  ['dragenter','dragover','dragleave','drop'].forEach(eventName => {
-    window.addEventListener(eventName, prevent, false);
-  });
-  window.addEventListener('dragenter', () => { dropzoneEl.style.display = 'flex'; });
-  window.addEventListener('dragleave', (e) => { if (e.target === document || e.target === window) dropzoneEl.style.display='none'; });
-  window.addEventListener('drop', (e) => {
-    dropzoneEl.style.display='none';
-    const dt = e.dataTransfer;
-    if (!dt?.files?.length) return;
-    const files = Array.from(dt.files);
-    const filesMap = new Map();
-    let mainFile = null;
-    files.forEach(f => {
-      filesMap.set(f.name, f);
-      if (f.name.match(/\.(gltf|glb)$/i)) mainFile = f;
-    });
-    if (!mainFile) {
-      showError(new Error('No .gltf or .glb file found in drop.'));
-      return;
-    }
-    const objectURL = URL.createObjectURL(mainFile);
-    loadModel(objectURL, filesMap).finally(() => {
-      setTimeout(() => URL.revokeObjectURL(objectURL), 60000);
-    });
-  });
-}
 
 function setupKeyboard() {
   window.addEventListener('keydown', (e) => {
