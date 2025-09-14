@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Three.js GLTF Viewer</title>
+  <title>V4SiteConcept</title>
   <style>
     html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#111; color:#eee; font-family: system-ui, Arial, sans-serif; }
     #app { position:fixed; inset:0; }
@@ -11,8 +11,6 @@
     #loading { position:fixed; top:12px; left:12px; background:rgba(0,0,0,0.6); padding:8px 12px; border-radius:6px; font-size:13px; letter-spacing:.5px; }
     #loading.progress-done { display:none; }
     #error { position:fixed; bottom:12px; left:12px; right:12px; background:#b00020; color:#fff; padding:10px 14px; border-radius:6px; font-size:14px; display:none; white-space:pre-wrap; }
-    #dropzone { position:fixed; inset:0; border:2px dashed #444; display:none; align-items:center; justify-content:center; pointer-events:none; color:#aaa; font-size:20px; }
-    #help { position:fixed; top:12px; right:12px; background:rgba(0,0,0,.5); padding:8px 12px; border-radius:6px; font-size:12px; line-height:1.4; max-width:240px; }
     #camInfo { position:fixed; bottom:12px; right:12px; background:rgba(0,0,0,.5); padding:6px 10px; border-radius:6px; font-size:12px; font-family:monospace; letter-spacing:.5px; }
     a { color:#7ec8ff; }
     #dash-ui { position:fixed; left:-9999px; top:0; width:512px; height:320px; background:#181c24; color:#fff; font-family:sans-serif; border-radius:18px; box-shadow:0 0 24px #000a; display:flex; flex-direction:column; justify-content:center; align-items:center; }
@@ -32,10 +30,8 @@
   </script>
   <div id="app"></div>
   <div id="loading">Loading: <span id="progress">0</span>%</div>
-  <div id="help">Scroll Wheel / ← → : Cycle Cameras<br/>F: Re-apply current camera<br/>Drop: .gltf/.glb to replace scene<br/>(Viewer locked to exported cameras)</div>
   <div id="camInfo" style="display:none;">Cam: -</div>
   <div id="error"></div>
-  <div id="dropzone">Drop .gltf / .glb / .bin / textures here</div>
   <div id="dash-ui">
     <h2>DASH MENU</h2>
     <button onclick="alert('Option 1!')">Option 1</button>
