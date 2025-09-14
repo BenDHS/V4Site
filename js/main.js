@@ -6,7 +6,7 @@ import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders
 import { DRACOLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/DRACOLoader.js';
 
 // If you exported e.g. scene.glb to public/models, set:
-const MODEL_URL = '/models/scene.glb'; // Change to your file name (.gltf or .glb)
+const MODEL_URL = './models/scene.glb'; // Change to your file name (.gltf or .glb)
 
 const container = document.getElementById('app');
 const loadingEl = document.getElementById('loading');
