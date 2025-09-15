@@ -160,21 +160,28 @@ function loadModel(url, filesMap) {
           const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
           mats.forEach((mat, idx) => {
             if ((mat.name || '').toUpperCase() === 'SCREEN') {
-              // Replace with MeshBasicMaterial to ignore all lighting
-              const basicMat = new THREE.MeshBasicMaterial({
+              // Use MeshStandardMaterial with both map and emissiveMap set to the video texture
+              const stdMat = new THREE.MeshStandardMaterial({
                 map: videoTex,
+                emissiveMap: videoTex,
                 color: 0xffffff,
-                toneMapped: false
+                emissive: 0xffffff,
+                emissiveIntensity: 0.3,
+                toneMapped: true,
               });
-              if (basicMat.map) {
-                if ('colorSpace' in basicMat.map) basicMat.map.colorSpace = THREE.SRGBColorSpace;
-                if ('encoding' in basicMat.map) basicMat.map.encoding = THREE.sRGBEncoding;
+              if (stdMat.map) {
+                if ('colorSpace' in stdMat.map) stdMat.map.colorSpace = THREE.SRGBColorSpace;
+                if ('encoding' in stdMat.map) stdMat.map.encoding = THREE.sRGBEncoding;
               }
-              basicMat.needsUpdate = true;
+              if (stdMat.emissiveMap) {
+                if ('colorSpace' in stdMat.emissiveMap) stdMat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+                if ('encoding' in stdMat.emissiveMap) stdMat.emissiveMap.encoding = THREE.sRGBEncoding;
+              }
+              stdMat.needsUpdate = true;
               if (Array.isArray(obj.material)) {
-                obj.material[idx] = basicMat;
+                obj.material[idx] = stdMat;
               } else {
-                obj.material = basicMat;
+                obj.material = stdMat;
               }
             }
           });
@@ -183,50 +190,15 @@ function loadModel(url, filesMap) {
       // --- END VIDEO PATCH ---
 
       // --- MATERIAL LIGHTING ENHANCEMENT ---
-      // Enhance all materials to properly reflect lights like in Blender
       currentRoot.traverse(obj => {
         if (obj.isMesh && obj.material) {
           const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
           materials.forEach((mat, idx) => {
             // Skip SCREEN materials (already handled above)
             if ((mat.name || '').toUpperCase() === 'SCREEN') return;
-            
-            // Special handling for LIVERY material - make it car paint with clearcoat
-            if ((mat.name || '').toUpperCase() === 'LIVERY') {
-              const carPaintMat = new THREE.MeshPhysicalMaterial();
-              
-              // Copy existing textures
-              if (mat.map) carPaintMat.map = mat.map;
-              if (mat.normalMap) carPaintMat.normalMap = mat.normalMap;
-              if (mat.color) carPaintMat.color.copy(mat.color);
-              
-              // Car paint properties
-              carPaintMat.metalness = 0.0;     // Paint is non-metallic
-              carPaintMat.roughness = 0.1;     // Very smooth base
-              carPaintMat.clearcoat = 1.0;     // Full clearcoat
-              carPaintMat.clearcoatRoughness = 0.03; // Very smooth clearcoat
-              carPaintMat.reflectivity = 0.9;  // High reflectivity
-              carPaintMat.ior = 1.5;           // Index of refraction for clearcoat
-              carPaintMat.name = mat.name;
-              
-              // Ensure correct color space
-              if (carPaintMat.map) carPaintMat.map.colorSpace = THREE.SRGBColorSpace;
-              
-              // Replace the material
-              if (Array.isArray(obj.material)) {
-                obj.material[idx] = carPaintMat;
-              } else {
-                obj.material = carPaintMat;
-              }
-              return; // Skip the general material processing below
-            }
-            
             // Ensure materials are physically based for proper lighting
             if (!mat.isMeshStandardMaterial && !mat.isMeshPhysicalMaterial) {
-              // Convert to MeshStandardMaterial while preserving textures
               const newMat = new THREE.MeshStandardMaterial();
-              
-              // Copy common properties
               if (mat.map) newMat.map = mat.map;
               if (mat.normalMap) newMat.normalMap = mat.normalMap;
               if (mat.roughnessMap) newMat.roughnessMap = mat.roughnessMap;
@@ -235,32 +207,26 @@ function loadModel(url, filesMap) {
               if (mat.aoMap) newMat.aoMap = mat.aoMap;
               if (mat.color) newMat.color.copy(mat.color);
               if (mat.emissive) newMat.emissive.copy(mat.emissive);
-              
-              // Set good defaults for realistic lighting
               newMat.metalness = mat.metalness !== undefined ? mat.metalness : 0.1;
               newMat.roughness = mat.roughness !== undefined ? mat.roughness : 0.7;
               newMat.name = mat.name;
-              
-              // Replace the material
               if (Array.isArray(obj.material)) {
                 obj.material[idx] = newMat;
               } else {
                 obj.material = newMat;
               }
             } else {
-              // Already a PBR material, just ensure good lighting values
               if (mat.metalness === undefined) mat.metalness = 0.1;
               if (mat.roughness === undefined) mat.roughness = 0.7;
             }
-            
-            // Ensure all textures have correct color space
             if (mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
             if (mat.emissiveMap) mat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
-            
             mat.needsUpdate = true;
           });
         }
       });
+
+      // --- END MATERIAL ENHANCEMENT ---
       // --- END MATERIAL ENHANCEMENT ---
 
   // --- DASHNEW INTERACTIVE MENU PATCH ---
@@ -557,7 +523,8 @@ function onWheel(e) {
   // Only respond to significant wheel events (mouse wheel clicks)
   // Ignore small trackpad scrolling to prevent conflicts with touch
   if (Math.abs(dy) >= 25 && now >= __wheelCooldownUntil) {
-    cycleCamera(dy > 0 ? 1 : -1);
+    // Flip direction: up (dy < 0) increases camera index
+    cycleCamera(dy < 0 ? 1 : -1);
     __wheelCooldownUntil = now + WHEEL_COOLDOWN_MS;
   }
 }
