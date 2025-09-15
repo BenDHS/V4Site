@@ -17,6 +17,12 @@
     #dash-ui h2 { margin:18px 0 8px 0; }
     #dash-ui button { margin:8px; padding:10px 24px; font-size:16px; border-radius:8px; border:none; background:#2a7cff; color:#fff; cursor:pointer; }
     #dash-ui button:last-child { background:#444; }
+    /* Camera nav buttons (mobile/trackpad) */
+    #camNav { position:fixed; top:50%; right:12px; transform:translateY(-50%); display:flex; flex-direction:column; gap:10px; z-index:10; }
+    #camNav button { width:48px; height:48px; border:none; border-radius:50%; background:rgba(0,0,0,0.55); color:#fff; font-size:20px; cursor:pointer; backdrop-filter:blur(6px); display:flex; align-items:center; justify-content:center; }
+    #camNav button:active { transform:scale(0.92); }
+    @media (hover:hover) and (pointer:fine) { #camNav { opacity:0.35; transition:opacity .25s; } #camNav:hover { opacity:1; } }
+    @media (max-width:700px) { #camNav button { width:56px; height:56px; font-size:24px; } }
   </style>
 </head>
 <body>
@@ -37,6 +43,11 @@
     <button onclick="alert('Option 1!')">Option 1</button>
     <button onclick="alert('Option 2!')">Option 2</button>
     <button onclick="alert('Settings!')" style="background:#444;">Settings</button>
+  </div>
+  <!-- On-screen camera navigation (appears also on desktop but subtle) -->
+  <div id="camNav" aria-label="Camera navigation" role="group">
+    <button data-cam-prev aria-label="Previous camera">▲</button>
+    <button data-cam-next aria-label="Next camera">▼</button>
   </div>
   <script type="module" src="./js/main.js"></script>
 </body>

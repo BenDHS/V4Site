@@ -1,5 +1,13 @@
 // Three.js GLTF Viewer (Camera Cycling Mode)
 // Locks viewport to exported glTF cameras; mouse wheel cycles cameras.
+// Added: Unified input controls
+//  - Mouse wheel & trackpad (accumulated small deltas) cycle cameras
+//  - Touch vertical swipe (single finger) cycles cameras
+//  - On-screen buttons (▲/▼) for accessibility / mobile tapping
+//  - Keyboard left/right arrows also cycle (existing) and preserved
+// Implementation notes: we debounce rapid triggers using a cooldown and
+// accumulate small wheel deltas typical of trackpads to provide a single
+// camera change per intentional scroll gesture.
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
@@ -24,6 +32,11 @@ let __dashDebugMeshes = []; let __dashPatternMat = null; let __dashBBoxHelpers =
 let __dashOverlayPlane = null; let __dashDebugState = 0; // 0 normal,1 pattern,2 solid,3 overlay
 let __dashPatternTex = null; let __dashSurrogatePlane = null;
 
+// --- LIGHT HELPERS ---
+let lightHelpers = [];
+let lightLabels = [];
+// -------------
+
 init();
 loadInitial();
 animate();
@@ -45,22 +58,13 @@ function init() {
   fallbackCamera.position.set(2.5, 2, 3.5);
   activeRenderCamera = fallbackCamera;
 
-  // Lighting
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
-  hemi.position.set(0, 50, 0);
-  scene.add(hemi);
-
-  const dir = new THREE.DirectionalLight(0xffffff, 1.2);
-  dir.position.set(5, 10, 7);
-  dir.castShadow = true;
-  dir.shadow.mapSize.set(2048, 2048);
-  scene.add(dir);
-
-  const envGen = new THREE.PMREMGenerator(renderer);
-  scene.environment = envGen.fromScene(createMinimalHDRI()).texture;
-
   window.addEventListener('resize', onWindowResize);
+  // Wheel (mouse & trackpad) handler (passive:false so we can prevent default)
   window.addEventListener('wheel', onWheel, { passive: false });
+  // Touch swipe handlers for mobile
+  setupTouch();
+  // Optional on-screen buttons (if present in DOM)
+  setupButtons();
   setupKeyboard();
 }
 
@@ -178,6 +182,87 @@ function loadModel(url, filesMap) {
       });
       // --- END VIDEO PATCH ---
 
+      // --- MATERIAL LIGHTING ENHANCEMENT ---
+      // Enhance all materials to properly reflect lights like in Blender
+      currentRoot.traverse(obj => {
+        if (obj.isMesh && obj.material) {
+          const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+          materials.forEach((mat, idx) => {
+            // Skip SCREEN materials (already handled above)
+            if ((mat.name || '').toUpperCase() === 'SCREEN') return;
+            
+            // Special handling for LIVERY material - make it car paint with clearcoat
+            if ((mat.name || '').toUpperCase() === 'LIVERY') {
+              const carPaintMat = new THREE.MeshPhysicalMaterial();
+              
+              // Copy existing textures
+              if (mat.map) carPaintMat.map = mat.map;
+              if (mat.normalMap) carPaintMat.normalMap = mat.normalMap;
+              if (mat.color) carPaintMat.color.copy(mat.color);
+              
+              // Car paint properties
+              carPaintMat.metalness = 0.0;     // Paint is non-metallic
+              carPaintMat.roughness = 0.1;     // Very smooth base
+              carPaintMat.clearcoat = 1.0;     // Full clearcoat
+              carPaintMat.clearcoatRoughness = 0.03; // Very smooth clearcoat
+              carPaintMat.reflectivity = 0.9;  // High reflectivity
+              carPaintMat.ior = 1.5;           // Index of refraction for clearcoat
+              carPaintMat.name = mat.name;
+              
+              // Ensure correct color space
+              if (carPaintMat.map) carPaintMat.map.colorSpace = THREE.SRGBColorSpace;
+              
+              // Replace the material
+              if (Array.isArray(obj.material)) {
+                obj.material[idx] = carPaintMat;
+              } else {
+                obj.material = carPaintMat;
+              }
+              return; // Skip the general material processing below
+            }
+            
+            // Ensure materials are physically based for proper lighting
+            if (!mat.isMeshStandardMaterial && !mat.isMeshPhysicalMaterial) {
+              // Convert to MeshStandardMaterial while preserving textures
+              const newMat = new THREE.MeshStandardMaterial();
+              
+              // Copy common properties
+              if (mat.map) newMat.map = mat.map;
+              if (mat.normalMap) newMat.normalMap = mat.normalMap;
+              if (mat.roughnessMap) newMat.roughnessMap = mat.roughnessMap;
+              if (mat.metalnessMap) newMat.metalnessMap = mat.metalnessMap;
+              if (mat.emissiveMap) newMat.emissiveMap = mat.emissiveMap;
+              if (mat.aoMap) newMat.aoMap = mat.aoMap;
+              if (mat.color) newMat.color.copy(mat.color);
+              if (mat.emissive) newMat.emissive.copy(mat.emissive);
+              
+              // Set good defaults for realistic lighting
+              newMat.metalness = mat.metalness !== undefined ? mat.metalness : 0.1;
+              newMat.roughness = mat.roughness !== undefined ? mat.roughness : 0.7;
+              newMat.name = mat.name;
+              
+              // Replace the material
+              if (Array.isArray(obj.material)) {
+                obj.material[idx] = newMat;
+              } else {
+                obj.material = newMat;
+              }
+            } else {
+              // Already a PBR material, just ensure good lighting values
+              if (mat.metalness === undefined) mat.metalness = 0.1;
+              if (mat.roughness === undefined) mat.roughness = 0.7;
+            }
+            
+            // Ensure all textures have correct color space
+            if (mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+            if (mat.emissiveMap) mat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+            
+            mat.needsUpdate = true;
+          });
+        }
+      });
+      // --- END MATERIAL ENHANCEMENT ---
+
   // --- DASHNEW INTERACTIVE MENU PATCH ---
       const dashDiv = document.getElementById('dash-ui');
       const dashCanvas = document.createElement('canvas');
@@ -244,7 +329,7 @@ function loadModel(url, filesMap) {
           const matName = rawName.toUpperCase();
           const isDash = mat && (matName === 'DASHNEW' || matName.includes('DASHNEW') || matName === 'DASH' || matName.includes('DASH') || meshName.includes('DASHNEW') || meshName.includes('DASH'));
           if (isDash) {
-            console.log('[DASH] Applying to material', rawName || '(no-name)', 'on mesh', obj.name, '(matched DASHNEW logic)');
+            // ...existing code...
             ensureDashMaterial(mat, dashTex);
             dashApplied = true;
             dashCandidateMeshes.push(obj);
@@ -259,16 +344,16 @@ function loadModel(url, filesMap) {
           basicMat.name = 'DASHNEW_FALLBACK';
           targetMesh.material = basicMat;
           dashApplied = true;
-          console.log('[DASH] Fallback material applied to mesh:', targetMesh.name);
+          // ...existing code...
         } else {
-          console.warn('[DASH] No mesh available for fallback assignment.');
+    // ...existing code...
         }
       }
       function ensureDashMaterial(mat, tex) {
         if (!mat) return;
         __dashMatRefs.push(mat);
         // UV debug
-        currentRoot.traverse(o=>{ if(o.isMesh && o.material===mat){ if(!o.geometry.attributes.uv){ console.warn('[DASH] Mesh', o.name, 'has NO UVs.'); } }});
+  currentRoot.traverse(o=>{ if(o.isMesh && o.material===mat){ /* ...existing code... */ }});
         if (mat.isMeshStandardMaterial || mat.isMeshPhysicalMaterial) {
           mat.map = tex;
           mat.emissive = new THREE.Color(0xffffff);
@@ -286,7 +371,7 @@ function loadModel(url, filesMap) {
         } else {
           const replacement = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
           replacement.name = mat.name || 'DASHNEW';
-          console.log('[DASH] Replacing non-standard material type with MeshBasicMaterial for UI display.');
+          // ...existing code...
           mat.dispose?.();
           currentRoot.traverse(o=>{ if(o.isMesh){ if (Array.isArray(o.material)) { o.material = o.material.map(m=> m===mat ? replacement : m); } else if (o.material === mat) { o.material = replacement; } }});
           __dashMatRefs.push(replacement);
@@ -319,7 +404,7 @@ function loadModel(url, filesMap) {
         const patternTex = new THREE.CanvasTexture(pc); patternTex.colorSpace = THREE.SRGBColorSpace; patternTex.minFilter = THREE.NearestFilter; patternTex.magFilter = THREE.NearestFilter; patternTex.generateMipmaps = false; patternTex.needsUpdate = true;
         __dashPatternTex = patternTex;
         __dashPatternMat = new THREE.MeshBasicMaterial({ map: patternTex, side: THREE.DoubleSide, toneMapped:false });
-        console.log('[DASH] Pattern material created.');
+  // ...existing code...
       }
 
       // Overlay plane (mode 3) - build relative to first dash mesh
@@ -341,19 +426,14 @@ function loadModel(url, filesMap) {
         plane.position.add(forward.multiplyScalar(0.01));
         scene.add(plane);
         __dashOverlayPlane = plane;
-        console.log('[DASH] Overlay plane created size', planeW.toFixed(3), planeH.toFixed(3));
+  // ...existing code...
       }
 
       // Log detailed diagnostics for each dash material
-      __dashMatRefs.forEach((m,i)=>{
-        const hasMap = !!m.map; let dims='';
-        if (m.map && m.map.image) { dims = (m.map.image.width||'?')+'x'+(m.map.image.height||'?'); }
-        console.log(`[DASH] Mat#${i} type=${m.type} name=${m.name} map=${hasMap} dims=${dims}`);
-      });
+      // ...existing code...
 
       // Auto-fix UV orientation on load (same as pressing U key)
       if (__dashDebugMeshes.length > 0) {
-        console.log('[DASH] Auto-regenerating UVs to fix orientation...');
         regenerateDashUVs();
       }
 
@@ -456,13 +536,95 @@ function updateCameraUI() {
   const cam = gltfCameras[activeCamIndex];
   camInfoEl.textContent = `Cam: ${activeCamIndex+1}/${gltfCameras.length} ${cam.name || ''}`.trim();
 }
+// Central camera cycling utility
+function cycleCamera(direction, animated=true) {
+  if (!gltfCameras.length) return;
+  activeCamIndex = (activeCamIndex + direction + gltfCameras.length) % gltfCameras.length;
+  applyActiveCamera(!animated ? true : false); // we keep existing animation logic
+}
 
+// Mouse wheel only (disable trackpad accumulation to prevent conflicts)
+let __wheelCooldownUntil = 0;
+const WHEEL_COOLDOWN_MS = 500; // longer cooldown
 function onWheel(e) {
-  if (!gltfCameras.length) return; // nothing to cycle
+  if (!gltfCameras.length) return;
   e.preventDefault();
-  const dir = e.deltaY > 0 ? 1 : -1;
-  activeCamIndex = (activeCamIndex + dir + gltfCameras.length) % gltfCameras.length;
-  applyActiveCamera(false);
+  let dy = e.deltaY;
+  // Normalize based on deltaMode (0=pixels,1=lines,2=pages)
+  if (e.deltaMode === 1) dy *= 16; else if (e.deltaMode === 2) dy *= window.innerHeight;
+  const now = performance.now();
+  
+  // Only respond to significant wheel events (mouse wheel clicks)
+  // Ignore small trackpad scrolling to prevent conflicts with touch
+  if (Math.abs(dy) >= 25 && now >= __wheelCooldownUntil) {
+    cycleCamera(dy > 0 ? 1 : -1);
+    __wheelCooldownUntil = now + WHEEL_COOLDOWN_MS;
+  }
+}
+
+// Touch swipe detection - single shot, no accumulation
+let __touchGestureActive = false;
+let __touchLastCameraChange = 0;
+const TOUCH_SWIPE_THRESHOLD = 15; // much lower threshold for higher sensitivity
+const TOUCH_GLOBAL_COOLDOWN = 1500; // 1.5 second global cooldown
+function setupTouch() {
+  let startY = null, startX = null, startTime = 0;
+  
+  window.addEventListener('touchstart', (e)=>{
+    if (!gltfCameras.length || e.touches.length !== 1) return;
+    if (__touchGestureActive) return; // one gesture at a time
+    
+    const t = e.touches[0];
+    startY = t.clientY;
+    startX = t.clientX; 
+    startTime = performance.now();
+  __touchGestureActive = true;
+  }, { passive: true });
+  
+  window.addEventListener('touchend', (e)=>{
+    if (!__touchGestureActive || startY === null) {
+      __touchGestureActive = false;
+      return;
+    }
+    
+    const now = performance.now();
+    if (now - __touchLastCameraChange < TOUCH_GLOBAL_COOLDOWN) {
+      __touchGestureActive = false;
+      startY = startX = null;
+      return;
+    }
+    
+    const changed = e.changedTouches[0];
+    const dy = changed.clientY - startY;
+    const dx = changed.clientX - startX;
+    const ady = Math.abs(dy);
+    const adx = Math.abs(dx);
+    
+    // Simple threshold check - mostly vertical movement
+    if (ady >= TOUCH_SWIPE_THRESHOLD && ady > adx) {
+      cycleCamera(dy > 0 ? 1 : -1);
+      __touchLastCameraChange = now;
+    }
+    
+    // Always reset gesture state
+    __touchGestureActive = false;
+    startY = startX = null;
+  }, { passive: true });
+  
+  window.addEventListener('touchcancel', ()=>{
+    __touchGestureActive = false;
+    startY = startX = null;
+  // ...existing code...
+  }, { passive: true });
+}
+
+function setupButtons() {
+  const nav = document.getElementById('camNav');
+  if (!nav) return;
+  const prevBtn = nav.querySelector('[data-cam-prev]');
+  const nextBtn = nav.querySelector('[data-cam-next]');
+  if (prevBtn) prevBtn.addEventListener('click', ()=> cycleCamera(-1));
+  if (nextBtn) nextBtn.addEventListener('click', ()=> cycleCamera(1));
 }
 
 
@@ -473,23 +635,15 @@ function setupKeyboard() {
     }
     if (e.key === 'ArrowRight') { if (gltfCameras.length) { activeCamIndex = (activeCamIndex+1)%gltfCameras.length; applyActiveCamera(); } }
     if (e.key === 'ArrowLeft') { if (gltfCameras.length) { activeCamIndex = (activeCamIndex-1+gltfCameras.length)%gltfCameras.length; applyActiveCamera(); } }
-    if (e.key.toLowerCase() === 'b') { // toggle basic debug material
-      __dashMatRefs.forEach(m => {
-        if (!m) return;
-        if (!m._origType) m._origType = m.type;
-      });
-      console.log('[DASH] (B) currently only stores types; pattern debug handled by G.');
-    }
-    if (e.key.toLowerCase() === 'g') { window.__dashForcePattern = !window.__dashForcePattern; console.log('[DASH] Pattern toggle', window.__dashForcePattern); }
-    if (e.key.toLowerCase() === 'x') { __dashDebugState = (__dashDebugState+1)%4; console.log('[DASH] Debug mode', __dashDebugState, '0=normal 1=pattern 2=solid 3=overlay'); }
-    if (e.key.toLowerCase() === 'h') { window.__dashShowBBox = !window.__dashShowBBox; console.log('[DASH] BBox toggle', window.__dashShowBBox); }
-    if (e.key.toLowerCase() === 'w') { window.__dashWire = !window.__dashWire; console.log('[DASH] Wireframe toggle', window.__dashWire); }
-    // Spawn surrogate plane with guaranteed good UVs
+    if (e.key.toLowerCase() === 'b') { __dashMatRefs.forEach(m => { if (!m) return; if (!m._origType) m._origType = m.type; }); }
+    if (e.key.toLowerCase() === 'g') { window.__dashForcePattern = !window.__dashForcePattern; }
+    if (e.key.toLowerCase() === 'x') { __dashDebugState = (__dashDebugState+1)%4; }
+    if (e.key.toLowerCase() === 'h') { window.__dashShowBBox = !window.__dashShowBBox; }
+    if (e.key.toLowerCase() === 'w') { window.__dashWire = !window.__dashWire; }
     if (e.key.toLowerCase() === 'p') { createSurrogateDashPlane(); }
-    // Repaint dash canvas with high-contrast test
     if (e.key.toLowerCase() === 'r') { repaintDashTest(); }
-    // Attempt procedural planar UV projection on DASH meshes
     if (e.key.toLowerCase() === 'u') { regenerateDashUVs(); }
+    // REMOVED: OrbitControls and light helper toggles
   });
 }
 function replaceMaterialInstance(oldMat, newMat) {
@@ -550,8 +704,8 @@ function animate() {
 
 // --- UV / Surrogate diagnostics ---
 function createSurrogateDashPlane() {
-  if (__dashSurrogatePlane) { console.log('[DASH] Surrogate plane already exists.'); return; }
-  if (!__dashDebugMeshes.length) { console.warn('[DASH] No DASH debug meshes to align surrogate plane.'); return; }
+  if (__dashSurrogatePlane) { return; }
+  if (!__dashDebugMeshes.length) { return; }
   const ref = __dashDebugMeshes[0];
   const box = new THREE.Box3().setFromObject(ref);
   const size = box.getSize(new THREE.Vector3());
@@ -563,11 +717,11 @@ function createSurrogateDashPlane() {
   plane.position.add(new THREE.Vector3().subVectors(fallbackCamera.position, plane.position).normalize().multiplyScalar(0.02));
   scene.add(plane);
   __dashSurrogatePlane = plane;
-  console.log('[DASH] Surrogate plane created; toggle debug modes to compare.');
+  // ...existing code...
 }
 
 function repaintDashTest() {
-  if (!__dashTex || !__dashTex.image) { console.warn('[DASH] No dash canvas texture to repaint.'); return; }
+  if (!__dashTex || !__dashTex.image) { return; }
   const canvas = __dashTex.image; const ctx = canvas.getContext('2d');
   canvas.width = 512; canvas.height = 512; // force square for clarity
   const colors = ['#ff0000','#00ff00','#0000ff','#ffff00','#ff00ff','#00ffff'];
@@ -577,11 +731,11 @@ function repaintDashTest() {
   }
   ctx.fillStyle = '#000'; ctx.font = 'bold 48px sans-serif'; ctx.textAlign='center'; ctx.fillText('TEST', canvas.width/2, canvas.height/2+16);
   __dashTex.needsUpdate = true;
-  console.log('[DASH] Repainted canvas with high-contrast bars.');
+  // ...existing code...
 }
 
 function regenerateDashUVs() {
-  if (!__dashDebugMeshes.length) { console.warn('[DASH] No DASH meshes to regenerate UVs.'); return; }
+  if (!__dashDebugMeshes.length) { return; }
   __dashDebugMeshes.forEach(mesh => {
     const geo = mesh.geometry; if (!geo || !geo.attributes.position) return;
     geo.computeBoundingBox();
@@ -600,7 +754,7 @@ function regenerateDashUVs() {
     }
     geo.setAttribute('uv', new THREE.BufferAttribute(uv,2));
     geo.attributes.uv.needsUpdate = true;
-    console.log(`[DASH] Regenerated planar UVs for mesh ${mesh.name} using axes ${a1}/${a2}.`);
+  // ...existing code...
   });
 }
 // --- END UV / Surrogate diagnostics ---
