@@ -41,6 +41,10 @@ let introAnimationAction = null;
 let hasPlayedIntroAnimation = false;
 let isIntroAnimationPlaying = false;
 let firstInteractionDetected = false;
+let secondInteractionDetected = false;
+let animationPhase = 'waiting-first'; // 'waiting-first', 'playing-to-48', 'paused-at-48', 'playing-to-96', 'completed'
+let frame48Time = 0;
+let frame96Time = 0;
 
 // --- LIGHT HELPERS ---
 let lightHelpers = [];
@@ -76,8 +80,8 @@ function init() {
   // Wheel (mouse & trackpad) handler (passive:false so we can prevent default)
   window.addEventListener('wheel', onWheel, { passive: false });
   
-  // General click handler for first interaction detection
-  window.addEventListener('click', handleFirstInteraction, { once: false });
+  // General click handler for interaction detection
+  window.addEventListener('click', handleInteraction, { once: false });
   // Touch swipe handlers for mobile
   setupTouch();
   // Optional on-screen buttons (if present in DOM)
@@ -323,6 +327,10 @@ function setupAnimationSystem(gltf) {
   hasPlayedIntroAnimation = false;
   isIntroAnimationPlaying = false;
   firstInteractionDetected = false;
+  secondInteractionDetected = false;
+  animationPhase = 'waiting-first';
+  frame48Time = 0;
+  frame96Time = 0;
 
   // Check if there are animations in the GLTF
   if (gltf.animations && gltf.animations.length > 0) {
@@ -349,20 +357,27 @@ function setupAnimationSystem(gltf) {
     introAnimationClip = gltf.animations[0];
     introAnimationAction = animationMixer.clipAction(introAnimationClip);
     
-    // Configure the animation to play once
+    // Calculate frame times (assuming 24fps)
+    const fps = 24;
+    frame48Time = 48 / fps;
+    frame96Time = 96 / fps;
+    
+    // Configure the animation to play once but we'll control it manually
     introAnimationAction.setLoop(THREE.LoopOnce);
     introAnimationAction.clampWhenFinished = true;
     
-    // Listen for animation completion
+    // Listen for animation completion (this will now happen at frame 96)
     animationMixer.addEventListener('finished', (event) => {
       if (event.action === introAnimationAction) {
-        console.log('Intro animation completed');
+        console.log('Intro animation completed at frame 96');
         hasPlayedIntroAnimation = true;
         isIntroAnimationPlaying = false;
+        animationPhase = 'completed';
       }
     });
     
     console.log(`\nIntro animation setup: "${introAnimationClip.name || 'Unnamed'}" (${introAnimationClip.duration.toFixed(2)}s)`);
+    console.log(`Frame 48 time: ${frame48Time.toFixed(2)}s, Frame 96 time: ${frame96Time.toFixed(2)}s`);
     
   } else {
     // No animations found
@@ -391,32 +406,40 @@ function disposeHierarchy(root) {
 
 
 
-// Handle first user interaction to trigger intro animation
-function handleFirstInteraction() {
-  if (firstInteractionDetected) return;
-  
-  firstInteractionDetected = true;
-  
-  // If we have an intro animation and it hasn't been played yet
-  if (introAnimationAction && !hasPlayedIntroAnimation && !isIntroAnimationPlaying) {
-    console.log('First interaction detected - starting intro animation');
-    console.log('Animated camera:', computerCamera ? computerCamera.name : 'NOT FOUND');
+// Handle user interactions to control animation phases
+function handleInteraction() {
+  if (!firstInteractionDetected) {
+    // First interaction - start animation to frame 48
+    firstInteractionDetected = true;
+    
+    if (introAnimationAction && animationPhase === 'waiting-first') {
+      console.log('First interaction detected - starting animation to frame 48');
+      console.log('Animated camera:', computerCamera ? computerCamera.name : 'NOT FOUND');
+      animationPhase = 'playing-to-48';
+      isIntroAnimationPlaying = true;
+      introAnimationAction.reset();
+      introAnimationAction.play();
+    }
+  } else if (!secondInteractionDetected && animationPhase === 'paused-at-48') {
+    // Second interaction - continue animation to frame 96
+    secondInteractionDetected = true;
+    console.log('Second interaction detected - continuing animation to frame 96');
+    animationPhase = 'playing-to-96';
     isIntroAnimationPlaying = true;
-    introAnimationAction.reset();
-    introAnimationAction.play();
+    // Don't reset, just continue from where we paused
   }
 }
 
 function onWheel(e) {
   e.preventDefault();
-  // Just handle first interaction to start animation
-  handleFirstInteraction();
+  // Handle interaction to control animation
+  handleInteraction();
 }
 
 function setupTouch() {
   window.addEventListener('touchstart', (e)=>{
-    // Just handle first interaction to start animation
-    handleFirstInteraction();
+    // Handle interaction to control animation
+    handleInteraction();
   }, { passive: true });
 }
 
@@ -425,15 +448,15 @@ function setupButtons() {
   if (!nav) return;
   const prevBtn = nav.querySelector('[data-cam-prev]');
   const nextBtn = nav.querySelector('[data-cam-next]');
-  if (prevBtn) prevBtn.addEventListener('click', handleFirstInteraction);
-  if (nextBtn) nextBtn.addEventListener('click', handleFirstInteraction);
+  if (prevBtn) prevBtn.addEventListener('click', handleInteraction);
+  if (nextBtn) nextBtn.addEventListener('click', handleInteraction);
 }
 
 
 function setupKeyboard() {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-      handleFirstInteraction();
+      handleInteraction();
     }
     if (e.key.toLowerCase() === 'b') { __dashMatRefs.forEach(m => { if (!m) return; if (!m._origType) m._origType = m.type; }); }
     if (e.key.toLowerCase() === 'g') { window.__dashForcePattern = !window.__dashForcePattern; }
@@ -467,10 +490,34 @@ function onWindowResize() {
 function animate() {
   requestAnimationFrame(animate);
   
-  // Update animation mixer
-  if (animationMixer && isIntroAnimationPlaying) {
+  // Update animation mixer with frame-based control
+  if (animationMixer && isIntroAnimationPlaying && introAnimationAction) {
     const delta = clock.getDelta();
+    
+    // Check current animation time before updating
+    const currentTime = introAnimationAction.time;
+    
+    // Update the mixer
     animationMixer.update(delta);
+    
+    // Check if we need to pause at frame 48
+    if (animationPhase === 'playing-to-48' && introAnimationAction.time >= frame48Time) {
+      console.log('Pausing animation at frame 48');
+      animationPhase = 'paused-at-48';
+      isIntroAnimationPlaying = false;
+      // Set the time exactly to frame 48 to avoid overshooting
+      introAnimationAction.time = frame48Time;
+    }
+    
+    // Check if we've reached frame 96 in the second phase
+    if (animationPhase === 'playing-to-96' && introAnimationAction.time >= frame96Time) {
+      console.log('Animation completed at frame 96');
+      animationPhase = 'completed';
+      hasPlayedIntroAnimation = true;
+      isIntroAnimationPlaying = false;
+      // Set the time exactly to frame 96
+      introAnimationAction.time = frame96Time;
+    }
   }
   
   if (__dashTex) { __dashTex.needsUpdate = true; }
