@@ -10,8 +10,8 @@
 // camera change per intentional scroll gesture.
 
 import * as THREE from 'three';
-import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
-import { DRACOLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/DRACOLoader.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
 // If you exported e.g. scene.glb to public/models, set:
 const MODEL_URL = './models/scene.glb'; // Change to your file name (.gltf or .glb)
@@ -46,7 +46,16 @@ function init() {
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.NeutralToneMapping;
+  // Use a widely supported tone mapping (Neutral may be undefined in some builds)
+  const __tm = (typeof THREE.ACESFilmicToneMapping !== 'undefined') ? THREE.ACESFilmicToneMapping
+             : (typeof THREE.ReinhardToneMapping !== 'undefined') ? THREE.ReinhardToneMapping
+             : THREE.LinearToneMapping;
+  renderer.toneMapping = __tm;
+  console.log('[Renderer] toneMapping chosen =', renderer.toneMapping, {
+    ACESFilmicToneMapping: THREE.ACESFilmicToneMapping,
+    ReinhardToneMapping: THREE.ReinhardToneMapping,
+    LinearToneMapping: THREE.LinearToneMapping
+  });
   renderer.toneMappingExposure = 1.0;
   container.appendChild(renderer.domElement);
 
@@ -233,14 +242,8 @@ function loadModel(url, filesMap) {
                 emissiveIntensity: 0.3,
                 toneMapped: true,
               });
-              if (stdMat.map) {
-                if ('colorSpace' in stdMat.map) stdMat.map.colorSpace = THREE.SRGBColorSpace;
-                if ('encoding' in stdMat.map) stdMat.map.encoding = THREE.sRGBEncoding;
-              }
-              if (stdMat.emissiveMap) {
-                if ('colorSpace' in stdMat.emissiveMap) stdMat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
-                if ('encoding' in stdMat.emissiveMap) stdMat.emissiveMap.encoding = THREE.sRGBEncoding;
-              }
+              if (stdMat.map && 'colorSpace' in stdMat.map) stdMat.map.colorSpace = THREE.SRGBColorSpace;
+              if (stdMat.emissiveMap && 'colorSpace' in stdMat.emissiveMap) stdMat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
               stdMat.needsUpdate = true;
               if (Array.isArray(obj.material)) {
                 obj.material[idx] = stdMat;
@@ -283,8 +286,8 @@ function loadModel(url, filesMap) {
               if (mat.metalness === undefined) mat.metalness = 0.1;
               if (mat.roughness === undefined) mat.roughness = 0.7;
             }
-            if (mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
-            if (mat.emissiveMap) mat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+            if (mat.map && 'colorSpace' in mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+            if (mat.emissiveMap && 'colorSpace' in mat.emissiveMap) mat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
             mat.needsUpdate = true;
           });
         }
