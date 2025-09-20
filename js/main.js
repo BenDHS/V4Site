@@ -33,6 +33,8 @@ let __dashTex = null; let __dashMatRefs = [];
 let __dashDebugMeshes = []; let __dashPatternMat = null; let __dashBBoxHelpers = []; let __dashWire = false;
 let __dashOverlayPlane = null; let __dashDebugState = 0; // 0 normal,1 pattern,2 solid,3 overlay
 let __dashPatternTex = null; let __dashSurrogatePlane = null;
+// Clamp animation delta to avoid big jumps after a pause/tab switch
+const MAX_ANIM_DELTA = 0.05; // ~20 FPS per tick maximum fed to mixer
 
 // --- ANIMATION SYSTEM ---
 let animationMixer = null;
@@ -42,9 +44,11 @@ let hasPlayedIntroAnimation = false;
 let isIntroAnimationPlaying = false;
 let firstInteractionDetected = false;
 let secondInteractionDetected = false;
-let animationPhase = 'waiting-first'; // 'waiting-first', 'playing-to-48', 'paused-at-48', 'playing-to-96', 'completed'
+let thirdInteractionDetected = false;
+let animationPhase = 'waiting-first'; // 'waiting-first', 'playing-to-48', 'paused-at-48', 'playing-to-96', 'paused-at-96', 'playing-to-120', 'completed'
 let frame48Time = 0;
 let frame96Time = 0;
+let frame120Time = 0;
 
 // --- LIGHT HELPERS ---
 let lightHelpers = [];
@@ -328,9 +332,11 @@ function setupAnimationSystem(gltf) {
   isIntroAnimationPlaying = false;
   firstInteractionDetected = false;
   secondInteractionDetected = false;
+  thirdInteractionDetected = false;
   animationPhase = 'waiting-first';
   frame48Time = 0;
   frame96Time = 0;
+  frame120Time = 0;
 
   // Check if there are animations in the GLTF
   if (gltf.animations && gltf.animations.length > 0) {
@@ -358,15 +364,16 @@ function setupAnimationSystem(gltf) {
     introAnimationAction = animationMixer.clipAction(introAnimationClip);
     
     // Calculate frame times (assuming 24fps)
-    const fps = 24;
-    frame48Time = 48 / fps;
-    frame96Time = 96 / fps;
+  const fps = 24;
+  frame48Time = 48 / fps;
+  frame96Time = 96 / fps;
+  frame120Time = Math.min(120 / fps, introAnimationClip.duration);
     
     // Configure the animation to play once but we'll control it manually
     introAnimationAction.setLoop(THREE.LoopOnce);
     introAnimationAction.clampWhenFinished = true;
     
-    // Listen for animation completion (this will now happen at frame 96)
+  // Listen for animation completion (end of clip); we also manually stop at frame 120
     animationMixer.addEventListener('finished', (event) => {
       if (event.action === introAnimationAction) {
         console.log('Intro animation completed at frame 96');
@@ -415,8 +422,10 @@ function handleInteraction() {
     if (introAnimationAction && animationPhase === 'waiting-first') {
       console.log('First interaction detected - starting animation to frame 48');
       console.log('Animated camera:', computerCamera ? computerCamera.name : 'NOT FOUND');
-      animationPhase = 'playing-to-48';
-      isIntroAnimationPlaying = true;
+  animationPhase = 'playing-to-48';
+  // Flush any accumulated time so the first mixer.update doesn't jump
+  clock.getDelta();
+  isIntroAnimationPlaying = true;
       introAnimationAction.reset();
       introAnimationAction.play();
     }
@@ -424,9 +433,19 @@ function handleInteraction() {
     // Second interaction - continue animation to frame 96
     secondInteractionDetected = true;
     console.log('Second interaction detected - continuing animation to frame 96');
-    animationPhase = 'playing-to-96';
-    isIntroAnimationPlaying = true;
+  animationPhase = 'playing-to-96';
+  // Flush accumulated time so next mixer.update doesn't jump
+  clock.getDelta();
+  isIntroAnimationPlaying = true;
     // Don't reset, just continue from where we paused
+  } else if (!thirdInteractionDetected && animationPhase === 'paused-at-96') {
+    // Third interaction - continue animation to frame 120
+    thirdInteractionDetected = true;
+    console.log('Third interaction detected - continuing animation to frame 120');
+  animationPhase = 'playing-to-120';
+  // Flush accumulated time so next mixer.update doesn't jump
+  clock.getDelta();
+  isIntroAnimationPlaying = true;
   }
 }
 
@@ -490,15 +509,16 @@ function onWindowResize() {
 function animate() {
   requestAnimationFrame(animate);
   
+  // Always tick the clock; clamp delta when playing to avoid jumps
+  const rawDelta = clock.getDelta();
+  const playbackDelta = isIntroAnimationPlaying ? Math.min(rawDelta, MAX_ANIM_DELTA) : 0;
+  
   // Update animation mixer with frame-based control
-  if (animationMixer && isIntroAnimationPlaying && introAnimationAction) {
-    const delta = clock.getDelta();
-    
-    // Check current animation time before updating
-    const currentTime = introAnimationAction.time;
-    
-    // Update the mixer
-    animationMixer.update(delta);
+  if (animationMixer && introAnimationAction) {
+    if (playbackDelta > 0) {
+      // Update the mixer using clamped delta only while playing
+      animationMixer.update(playbackDelta);
+    }
     
     // Check if we need to pause at frame 48
     if (animationPhase === 'playing-to-48' && introAnimationAction.time >= frame48Time) {
@@ -509,14 +529,21 @@ function animate() {
       introAnimationAction.time = frame48Time;
     }
     
-    // Check if we've reached frame 96 in the second phase
+    // Check if we need to pause at frame 96 in the second phase
     if (animationPhase === 'playing-to-96' && introAnimationAction.time >= frame96Time) {
-      console.log('Animation completed at frame 96');
+      console.log('Pausing animation at frame 96');
+      animationPhase = 'paused-at-96';
+      isIntroAnimationPlaying = false;
+      introAnimationAction.time = frame96Time;
+    }
+
+    // Check if we've reached frame 120 in the third phase
+    if (animationPhase === 'playing-to-120' && introAnimationAction.time >= frame120Time) {
+      console.log('Animation completed at frame 120');
       animationPhase = 'completed';
       hasPlayedIntroAnimation = true;
       isIntroAnimationPlaying = false;
-      // Set the time exactly to frame 96
-      introAnimationAction.time = frame96Time;
+      introAnimationAction.time = frame120Time;
     }
   }
   
