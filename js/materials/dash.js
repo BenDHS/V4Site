@@ -1,7 +1,7 @@
 // Material configuration for DASHNEW/DASH interactive canvas material
 import * as THREE from 'three';
 
-export function applyDashMaterial(currentRoot, globalDashState) {
+export function applyDashMaterial(currentRoot) {
   const dashDiv = document.getElementById('dash-ui');
   const dashCanvas = document.createElement('canvas');
   dashCanvas.width = 512; 
@@ -10,7 +10,6 @@ export function applyDashMaterial(currentRoot, globalDashState) {
   
   const dashTex = new THREE.CanvasTexture(dashCanvas);
   dashTex.flipY = false; // Prevent Three.js from flipping the canvas (default true)
-  globalDashState.__dashTex = dashTex;
   dashTex.colorSpace = THREE.SRGBColorSpace;
   dashTex.minFilter = THREE.LinearFilter;
   dashTex.magFilter = THREE.LinearFilter;
@@ -76,7 +75,7 @@ export function applyDashMaterial(currentRoot, globalDashState) {
       const matName = rawName.toUpperCase();
       const isDash = mat && (matName === 'DASHNEW' || matName.includes('DASHNEW') || matName === 'DASH' || matName.includes('DASH') || meshName.includes('DASHNEW') || meshName.includes('DASH'));
       if (isDash) {
-        ensureDashMaterial(mat, dashTex, globalDashState);
+        ensureDashMaterial(mat, dashTex);
         dashApplied = true;
         dashCandidateMeshes.push(obj);
       }
@@ -84,7 +83,6 @@ export function applyDashMaterial(currentRoot, globalDashState) {
   });
   
   if (!dashApplied) {
-    console.warn('[DASH] DASHNEW/DASH material not found. Creating fallback UI material and assigning to first suitable mesh.');
     const targetMesh = findLargestMesh(currentRoot);
     if (targetMesh) {
       const basicMat = new THREE.MeshBasicMaterial({ map: dashTex });
@@ -94,9 +92,8 @@ export function applyDashMaterial(currentRoot, globalDashState) {
     }
   }
   
-  function ensureDashMaterial(mat, tex, globalState) {
+  function ensureDashMaterial(mat, tex) {
     if (!mat) return;
-    globalState.__dashMatRefs.push(mat);
     
     if (mat.isMeshStandardMaterial || mat.isMeshPhysicalMaterial) {
       mat.map = tex;
@@ -125,17 +122,8 @@ export function applyDashMaterial(currentRoot, globalDashState) {
           }
         }
       });
-      globalState.__dashMatRefs.push(replacement);
     }
     tex.needsUpdate = true;
-    
-    // Capture meshes for further debug visuals
-    currentRoot.traverse(o => {
-      if (o.isMesh) {
-        const materials = Array.isArray(o.material) ? o.material : [o.material];
-        if (materials.includes(mat)) globalState.__dashDebugMeshes.push(o);
-      }
-    });
   }
   
   function findLargestMesh(root) {
