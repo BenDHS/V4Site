@@ -28,14 +28,40 @@ let isIntroAnimationPlaying = false;
 let firstInteractionDetected = false;
 let secondInteractionDetected = false;
 let thirdInteractionDetected = false;
-let animationPhase = 'waiting-first'; // 'waiting-first', 'playing-to-48', 'paused-at-48', 'playing-to-96', 'paused-at-96', 'playing-to-120', 'completed'
+let animationPhase = 'waiting-first'; // 'waiting-first', 'playing-to-48', 'paused-at-48', 'playing-to-98', 'paused-at-98', 'playing-to-135', 'completed'
 let frame48Time = 0;
-let frame96Time = 0;
-let frame120Time = 0;
+let frame98Time = 0;
+let frame135Time = 0;
 
 init();
 loadInitial();
 animate();
+
+// Expose a global reset for the dash RESET button
+window.resetIntroAnimation = function resetIntroAnimation() {
+  if (!introAnimationAction || !animationMixer) return;
+  // Reset state flags
+  hasPlayedIntroAnimation = false;
+  isIntroAnimationPlaying = false;
+  firstInteractionDetected = false;
+  secondInteractionDetected = false;
+  thirdInteractionDetected = false;
+  animationPhase = 'waiting-first';
+
+  // Reset animation time and pause
+  introAnimationAction.stop();
+  introAnimationAction.reset();
+  introAnimationAction.time = 0;
+  introAnimationMixerSafeStop();
+  // Ensure the next user interaction starts playback normally
+  clock.getDelta();
+};
+
+function introAnimationMixerSafeStop() {
+  try {
+    // No-op helper for future extensibility
+  } catch (_) {}
+}
 
 function init() {
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -60,16 +86,6 @@ function init() {
   setupKeyboard();
 }
 
-function createMinimalHDRI() {
-  const tempScene = new THREE.Scene();
-  const light1 = new THREE.DirectionalLight(0xffffff, 1.5);
-  light1.position.set(10, 10, 10);
-  tempScene.add(light1);
-  const light2 = new THREE.DirectionalLight(0xffffff, 0.5);
-  light2.position.set(-10, -10, -10);
-  tempScene.add(light2);
-  return tempScene;
-}
 
 function loadInitial() {
   if (!MODEL_URL) return;
@@ -212,8 +228,8 @@ function setupAnimationSystem(gltf) {
   thirdInteractionDetected = false;
   animationPhase = 'waiting-first';
   frame48Time = 0;
-  frame96Time = 0;
-  frame120Time = 0;
+  frame98Time = 0;
+  frame135Time = 0;
 
   // Check if there are animations in the GLTF
   if (gltf.animations && gltf.animations.length > 0) {
@@ -238,8 +254,8 @@ function setupAnimationSystem(gltf) {
     // Calculate frame times (assuming 24fps)
   const fps = 24;
   frame48Time = 48 / fps;
-  frame96Time = 96 / fps;
-  frame120Time = Math.min(120 / fps, introAnimationClip.duration);
+  frame98Time = 98 / fps;
+  frame135Time = Math.min(135 / fps, introAnimationClip.duration);
     
     // Configure the animation to play once but we'll control it manually
     introAnimationAction.setLoop(THREE.LoopOnce);
@@ -296,17 +312,17 @@ function handleInteraction() {
       introAnimationAction.play();
     }
   } else if (!secondInteractionDetected && animationPhase === 'paused-at-48') {
-    // Second interaction - continue animation to frame 96
+    // Second interaction - continue animation to frame 98
     secondInteractionDetected = true;
-  animationPhase = 'playing-to-96';
+  animationPhase = 'playing-to-98';
   // Flush accumulated time so next mixer.update doesn't jump
   clock.getDelta();
   isIntroAnimationPlaying = true;
     // Don't reset, just continue from where we paused
-  } else if (!thirdInteractionDetected && animationPhase === 'paused-at-96') {
-    // Third interaction - continue animation to frame 120
+  } else if (!thirdInteractionDetected && animationPhase === 'paused-at-98') {
+    // Third interaction - continue animation to frame 135
     thirdInteractionDetected = true;
-  animationPhase = 'playing-to-120';
+  animationPhase = 'playing-to-135';
   // Flush accumulated time so next mixer.update doesn't jump
   clock.getDelta();
   isIntroAnimationPlaying = true;
@@ -367,19 +383,19 @@ function animate() {
       introAnimationAction.time = frame48Time;
     }
     
-    // Check if we need to pause at frame 96 in the second phase
-    if (animationPhase === 'playing-to-96' && introAnimationAction.time >= frame96Time) {
-      animationPhase = 'paused-at-96';
+    // Check if we need to pause at frame 98 in the second phase
+    if (animationPhase === 'playing-to-98' && introAnimationAction.time >= frame98Time) {
+      animationPhase = 'paused-at-98';
       isIntroAnimationPlaying = false;
-      introAnimationAction.time = frame96Time;
+      introAnimationAction.time = frame98Time;
     }
 
-    // Check if we've reached frame 120 in the third phase
-    if (animationPhase === 'playing-to-120' && introAnimationAction.time >= frame120Time) {
+    // Check if we've reached frame 135 in the third phase
+    if (animationPhase === 'playing-to-135' && introAnimationAction.time >= frame135Time) {
       animationPhase = 'completed';
       hasPlayedIntroAnimation = true;
       isIntroAnimationPlaying = false;
-      introAnimationAction.time = frame120Time;
+      introAnimationAction.time = frame135Time;
     }
   }
 
